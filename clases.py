@@ -1,5 +1,14 @@
+"""
+    SUPERVISOR: para mantener servicios andando constantemente.
+"""
+import cv2 as cv
+import tensorflow.compat.v1 as tf
 import random
 import time
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+executor = ProcessPoolExecutor(1)
+
 
 class Interseccion():
     """
@@ -7,55 +16,98 @@ class Interseccion():
     Tiene las siguientes propiedades:
         - id: Identificador que se provee por parametro
         . cantidad_vehiculos: Metodo que te retornaria la cantidad de vehiculos en esa interseccion
-        - nombre_imagen: Nombre de la imagen de donde debera ver la cantidad de vehiculos        
+        - directorio: Nombre de la carpeta de donde estara la imagen
         - tiempo_inactivo: Cada ronda que no le toque activarse se va a incrementar en 1
         - prioridad: Prioridad que tiene la interseccion sobre el resto.
     """
-    def __init__(self,id,nombre_imagen,prioridad):
+    def __init__(self, id, directorio, prioridad, tiempo_activacion):
         self.id = id
-        self.tiempo_inactivo = 0
-        self.nombre_imagen = nombre_imagen
+        self.tiempo_activacion = tiempo_activacion
+        self.directorio = directorio
         self.prioridad = prioridad
+        self.tiempo_inactivo = 0
+        self.vehiculos = 0
+
+    async def cantidad_vehiculos(self):
+        while True:
+            self._cantidad_vehiculos()
+            print(f"contando vehiculos inter: {self.id} Total: {self.vehiculos}")
+            await asyncio.sleep(3)
     
-    def cantidad_vehiculos(self):
-        return random.randint(1,10)
+    def _cantidad_vehiculos(self):
+        with tf.gfile.FastGFile('frozen_inference_graph.pb', 'rb') as f:
+            graph_def = tf.GraphDef()
+            graph_def.ParseFromString(f.read())
+            
+        with tf.Session() as sess:
+            sess.graph.as_default()
+            tf.import_graph_def(graph_def, name='')
+
+            img = cv.imread(self.obtener_imagen())
+            inp = cv.resize(img, (300, 300))
+            inp = inp[:, :, [2, 1, 0]]  # BGR2RGB
+
+            out = sess.run([sess.graph.get_tensor_by_name('num_detections:0'),
+                            sess.graph.get_tensor_by_name('detection_scores:0'),
+                            sess.graph.get_tensor_by_name('detection_boxes:0'),
+                            sess.graph.get_tensor_by_name('detection_classes:0')],
+                        feed_dict={'image_tensor:0': inp.reshape(1, inp.shape[0], inp.shape[1], 3)})
+
+            num_detections = int(out[0][0])
+
+        self.vehiculos = num_detections
+
+    def obtener_imagen(self):
+        nro = random.randint(0,100)
+        return f"{self.directorio}/{nro}.jpeg"
 
 
 class Manejador():
     """
     Clase encargada de la logica de manejar los semaforos
     Paramentros de la clase:
-        -Recibe como parametros una lista con las intersecciones que se van a manejar. 
+        -Recibe como parametros una lista con las intersecciones que se van a manejar.
             La lista debe contener los objetos de la clase Interseccion.
-        -tiempo_asignado: tiempo que se le asigno a la interseccion para estar en verde
-        -activo: interseccion que esta activa. 
-        -asignacion_minima: valor minimo de tiempo que se le puede asignar a una interseccion.
-        -asignacion_maxima: valor maximo de tiempo que se le puede asignar a una interseccion.
     """
-    def __init__(self, intersecciones,asignacion_minima,asignacion_maxima):
+    def __init__(self, intersecciones):
         self.intersecciones = intersecciones
-        self.tiempo_asignado = 0
         self.activo = None
-        self.asignacion_minima = asignacion_minima
-        self.asignacion_maxima = asignacion_maxima
-    
-    def seleccionar_interseccion(self):
+
+    async def seleccionar_interseccion(self):
         """
-        Metodo encargado de la logica para seleccionar que interseccion continuara y cuanto tiempo.
-        Retorna: (tiempo,interseccion)
+        Metodo encargado de la logica para seleccionar que interseccion continuara.
         """
-        return random.randint(self.asignacion_minima,self.asignacion_maxima), random.choice(self.intersecciones)
-    
-    def activar_semaforo(self):
-        print(f"se activara el semaforo {self.activo.id} - durante {self.tiempo_asignado} s.-\n Tiempo inactivo: {self.activo.tiempo_inactivo}")
+        print("seleccionando interseccion")
+        self.activo = random.choice(self.intersecciones)
+
+    async def activar_semaforo(self):
+        print(f"se activara el semaforo {self.activo.id}.-\n Tiempo inactivo: {self.activo.tiempo_inactivo}")
         self.activo.tiempo_inactivo = 0
         for inter in self.intersecciones:
             if inter.id != self.activo.id:
                 inter.tiempo_inactivo += 1
 
-        time.sleep(self.tiempo_asignado)
+        await asyncio.sleep(self.activo.tiempo_activacion)
 
     def gestionar_transito(self):
+        """
+            Ver log
+        """
+        loop = asyncio.get_event_loop()
+        try:
+            for inter in self.intersecciones:
+                asyncio.ensure_future(inter.cantidad_vehiculos())
+
+            asyncio.ensure_future(self.step())
+            loop.run_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            loop.close()
+
+    async def step(self):
         while True:
-            self.tiempo_asignado, self.activo = self.seleccionar_interseccion()
-            self.activar_semaforo()
+            await self.seleccionar_interseccion()                
+            await self.activar_semaforo()
+        #activo = self.seleccionar_interseccion()
+        #self.activar_semaforo(activo)
