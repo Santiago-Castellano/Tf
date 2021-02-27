@@ -1,0 +1,8 @@
+async-generator==1.10
+asyncio==3.4.3
+opencv-contrib-python==4.4.0.44
+opencv-python==4.4.0.42
+tensorflow==2.3.0
+tensorflow-datasets==3.2.1
+tensorflow-estimator==2.3.0
+tensorflow-metadata==0.24.0
