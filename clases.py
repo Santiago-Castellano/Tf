@@ -4,6 +4,7 @@
 import cv2 as cv
 import tensorflow.compat.v1 as tf
 import random
+from datetime import date, datetime
 import time
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
@@ -33,30 +34,35 @@ class Interseccion():
         self.sess = tf.Session()
         self.sess.graph.as_default()
         tf.import_graph_def(graph_def, name='')
-
-    async def cantidad_vehiculos(self):
-        while True:
-            self._cantidad_vehiculos()
-            print(f"contando vehiculos inter: {self.id} Total: {self.vehiculos}")
-            await asyncio.sleep(6)
     
-    def _cantidad_vehiculos(self):
+    async def contador_vehiculos(self):
+        start_read = datetime.now()
         img = cv.imread(self.obtener_imagen())
         inp = cv.resize(img, (300, 300))
         inp = inp[:, :, [2, 1, 0]]  # BGR2RGB
-
+        print(f"TIEMPO PARA LEER inter {self.id}: {(datetime.now() - start_read).total_seconds()}")
+        await asyncio.sleep(0)
+        start_detection = datetime.now()
         out = self.sess.run([self.sess.graph.get_tensor_by_name('num_detections:0'),
                         self.sess.graph.get_tensor_by_name('detection_scores:0'),
                         self.sess.graph.get_tensor_by_name('detection_boxes:0'),
                         self.sess.graph.get_tensor_by_name('detection_classes:0')],
                     feed_dict={'image_tensor:0': inp.reshape(1, inp.shape[0], inp.shape[1], 3)})
+        
+        print(f"TIEMPO PARA DETECTAR inter {self.id}: {(datetime.now() - start_detection).total_seconds()}")
 
         num_detections = int(out[0][0])
 
-        self.vehiculos = num_detections
+        self.vehiculos =  num_detections
+
+    async def actuailzador_cantidad_vehiculos(self):
+        while True:
+            await self.contador_vehiculos()
+            print(f"contando vehiculos inter: {self.id} Total: {self.vehiculos}")
+            await asyncio.sleep(3)
 
     def obtener_imagen(self):
-        nro = random.randint(0,100)
+        nro = random.randint(0,1000)
         return f"{self.directorio}/{nro}.jpeg"
 
 
@@ -90,7 +96,6 @@ class Manejador():
             if inter.id != self.activo.id:
                 inter.tiempo_inactivo += 1
 
-        await asyncio.sleep(self.activo.tiempo_activacion)
 
     def gestionar_transito(self):
         """
@@ -99,18 +104,17 @@ class Manejador():
         loop = asyncio.get_event_loop()
         try:
             for inter in self.intersecciones:
-                asyncio.ensure_future(inter.cantidad_vehiculos())
+                asyncio.ensure_future(inter.actuailzador_cantidad_vehiculos())
 
-            asyncio.ensure_future(self.step())
+            asyncio.ensure_future(self.control_semaforo())
             loop.run_forever()
         except KeyboardInterrupt:
             pass
         finally:
             loop.close()
 
-    async def step(self):
+    async def control_semaforo(self):
         while True:
             await self.seleccionar_interseccion()                
             await self.activar_semaforo()
-        #activo = self.seleccionar_interseccion()
-        #self.activar_semaforo(activo)
+            await asyncio.sleep(self.activo.tiempo_activacion)
