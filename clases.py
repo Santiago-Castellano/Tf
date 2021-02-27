@@ -62,7 +62,7 @@ class Interseccion():
             await asyncio.sleep(3)
 
     def obtener_imagen(self):
-        nro = random.randint(0,1000)
+        nro = random.randint(0,100)
         return f"{self.directorio}/{nro}.jpeg"
 
 
